@@ -4,6 +4,10 @@ from PIL import Image
 import pandas as pd
 import io
 from blood_parser import BloodReportParser
+from dotenv import load_dotenv
+
+if not os.getenv("STREAMLIT_SERVER_MODE"):  
+    load_dotenv()
 
 @st.cache_data
 def cached_extract_with_gemini(file_bytes, file_type, api_key, model_name):
@@ -96,7 +100,7 @@ def create_streamlit_app():
     
     st.sidebar.header("Settings")
     
-    default_api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", "")
+    default_api_key = (st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or "")
     api_key_source = st.sidebar.radio(
         "API Key Source", 
         options=["Use from .env file", "Enter manually"],
