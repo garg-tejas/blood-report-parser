@@ -96,7 +96,7 @@ def create_streamlit_app():
     
     st.sidebar.header("Settings")
     
-    default_api_key = os.getenv("GEMINI_API_KEY", "")
+    default_api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", "")
     api_key_source = st.sidebar.radio(
         "API Key Source", 
         options=["Use from .env file", "Enter manually"],
