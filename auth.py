@@ -9,11 +9,14 @@ import extra_streamlit_components as stx
 from dotenv import load_dotenv
 import httpx
 from urllib.parse import quote_plus
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+MAX_COOKIE_SIZE_BYTES = 4000
 
 class Auth0Management:
     def __init__(self):
@@ -58,18 +61,23 @@ class Auth0Management:
         """Get the Auth0 login URL"""
         if not self.config_valid:
             return None
+        
         encoded_callback = quote_plus(self.auth0_callback_url)
-        state = os.urandom(16).hex()
+        
+        state = f"{int(time.time())}-{os.urandom(8).hex()}"
         st.session_state.auth0_state = state
+        
+        prompt = "login consent"
         
         login_url = (f"https://{self.auth0_domain}/authorize?"
                     f"response_type=code&"
                     f"client_id={self.auth0_client_id}&"
                     f"redirect_uri={encoded_callback}&"
                     f"state={state}&"
+                    f"prompt={prompt}&"
                     f"scope=openid%20profile%20email")
         
-        logger.info(f"Login URL generated: {login_url[:50]}...")
+        logger.info(f"Login URL generated with state: {state}")
         return login_url
 
     def get_logout_url(self):
@@ -77,7 +85,8 @@ class Auth0Management:
         if not self.config_valid:
             return None
         encoded_return_to = quote_plus(self.auth0_callback_url)
-        return f"https://{self.auth0_domain}/v2/logout?client_id={self.auth0_client_id}&returnTo={encoded_return_to}"
+        
+        return f"https://{self.auth0_domain}/v2/logout?client_id={self.auth0_client_id}&returnTo={encoded_return_to}&prompt=login"
     
     def handle_callback(self, code):
         """Handle the Auth0 callback after login"""
@@ -87,6 +96,17 @@ class Auth0Management:
             
         try:
             logger.info("Handling Auth0 callback...")
+            
+            query_params = st.query_params
+            if "state" in query_params:
+                received_state = query_params.get("state")
+                expected_state = st.session_state.get("auth0_state")
+                
+                if expected_state is None:
+                    logger.error("No state found in session. Possible session loss or cookie issues.")
+                elif received_state != expected_state:
+                    logger.error(f"State mismatch. Received: {received_state}, Expected: {expected_state}")
+                    return None
             
             token_url = f"https://{self.auth0_domain}/oauth/token"
 
@@ -99,7 +119,6 @@ class Auth0Management:
             }
             
             logger.info(f"Sending token request to {token_url}")
-            logger.info(f"Using callback URL: {self.auth0_callback_url}")
             
             with httpx.Client(timeout=30.0) as client:
                 headers = {"Content-Type": "application/json"}
@@ -110,7 +129,7 @@ class Auth0Management:
                     return None
                 
                 token_info = response.json()
-                logger.info("Token received successfully")
+                logger.info(f"Token received successfully: {list(token_info.keys())}")
                 
                 if "access_token" in token_info:
                     user_info_url = f"https://{self.auth0_domain}/userinfo"
@@ -124,8 +143,17 @@ class Auth0Management:
                         return None
                     
                     user_info = user_response.json()
-                    logger.info(f"User info received for: {user_info.get('email', 'unknown')}")
-                    return user_info
+                    minimal_user_info = {
+                        "sub": user_info.get("sub"),
+                        "name": user_info.get("name"),
+                        "email": user_info.get("email"),
+                        "picture": user_info.get("picture")
+                    }
+                    
+                    minimal_user_info = {k: v for k, v in minimal_user_info.items() if v}
+                    
+                    logger.info(f"User info received for: {minimal_user_info.get('email', 'unknown')}")
+                    return minimal_user_info
                 else:
                     logger.error("No access token found in Auth0 response")
                     if "error" in token_info:
@@ -155,17 +183,31 @@ def get_auth_status():
                 
                 if datetime.now() < expiry_time:
                     st.session_state.auth_user = auth_data.get("user")
+                    logger.info(f"User authenticated from cookie: {auth_data.get('user', {}).get('email', 'unknown')}")
                     return True
+                else:
+                    logger.info("Auth cookie expired")
+                    cookie_manager.delete("auth_token")
             except Exception as e:
                 logger.error(f"Error reading auth cookie: {str(e)}")
-                pass
+        
+        if st.session_state.get("session_auth"):
+            logger.info("User authenticated from session state (no cookie)")
+            return True
+            
         return False
     return True
 
 
 def set_auth_cookie(user_data):
-    """Set authentication cookie"""
-    if user_data:
+    """Set authentication data in both cookie and session state"""
+    if not user_data:
+        logger.error("No user data provided to set_auth_cookie")
+        return
+    
+    st.session_state.auth_user = user_data
+    st.session_state.session_auth = True
+    try:
         cookie_manager = create_cookie_manager()
         expiry_time = datetime.now() + timedelta(days=7)
         
@@ -173,21 +215,31 @@ def set_auth_cookie(user_data):
             "user": user_data,
             "expiry": expiry_time.isoformat()
         }
-        
-        cookie_manager.set("auth_token", json.dumps(auth_data), expires_at=expiry_time)
-        st.session_state.auth_user = user_data
-        logger.info(f"Authentication cookie set for user: {user_data.get('email', 'unknown')}")
+        auth_json = json.dumps(auth_data)
+        if len(auth_json.encode('utf-8')) < MAX_COOKIE_SIZE_BYTES:
+            cookie_manager.set("auth_token", auth_json, expires_at=expiry_time, key="auth_token")
+            logger.info(f"Authentication cookie set for user: {user_data.get('email', 'unknown')}")
+        else:
+            logger.warning("Auth cookie too large, using session-only auth")
+    except Exception as e:
+        logger.error(f"Error setting auth cookie: {str(e)}")
 
 
 def clear_auth():
-    """Clear authentication data"""
+    """Clear authentication data from both cookie and session"""
     if "auth_user" in st.session_state:
-        logger.info(f"Logging out user: {st.session_state.auth_user.get('email', 'unknown')}")
+        user_email = st.session_state.auth_user.get('email', 'unknown')
+        logger.info(f"Logging out user: {user_email}")
         del st.session_state.auth_user
     
-    cookie_manager = create_cookie_manager()
-    cookie_manager.delete("auth_token")
-    logger.info("Auth cookie deleted")
+    if "session_auth" in st.session_state:
+        del st.session_state.session_auth
+    try:
+        cookie_manager = create_cookie_manager()
+        cookie_manager.delete("auth_token")
+        logger.info("Auth cookie deleted")
+    except Exception as e:
+        logger.error(f"Error clearing auth cookie: {str(e)}")
 
 
 def require_auth():
@@ -198,7 +250,28 @@ def require_auth():
         
         if auth.config_valid:
             login_url = auth.get_login_url()
-            st.markdown(f"[Login with Auth0]({login_url})")
+            
+            st.markdown(f'''
+            <div style="margin: 20px 0">
+                <a href="{login_url}" target="_self">
+                    <button style="
+                        background-color: #4CAF50;
+                        color: white;
+                        padding: 12px 20px;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        width: 100%;
+                        font-weight: bold;
+                    ">
+                        Login with Auth0
+                    </button>
+                </a>
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            st.info("Note: If you're using private browsing or have cookies disabled, you may need to allow cookies for this site.")
         else:
             st.error("Auth0 is not properly configured. Please check your settings.")
             

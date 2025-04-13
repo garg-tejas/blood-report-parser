@@ -6,6 +6,7 @@ import io
 import urllib.parse
 import hashlib
 from datetime import datetime
+import uuid
 from blood_parser import BloodReportParser
 from database import BloodReportDatabase
 from auth import Auth0Management, get_auth_status, set_auth_cookie, clear_auth, require_auth
@@ -13,6 +14,10 @@ from dotenv import load_dotenv
 
 if not os.getenv("STREAMLIT_SERVER_MODE"):  
     load_dotenv()
+
+def get_unique_key(base_name='widget'):
+    """Generate a unique key for Streamlit widgets to prevent duplicate key errors"""
+    return f"{base_name}_{uuid.uuid4().hex[:8]}"
 
 @st.cache_data
 def cached_extract_with_gemini(file_bytes, file_type, api_key, model_name):
@@ -92,26 +97,33 @@ def switch_to_history_mode():
     st.session_state.app_mode = "history"
 
 def handle_auth_callback():
-    """Handle OAuth callback from Auth0"""
-    st.write("Checking for Auth0 callback...")
-    
+    """Handle OAuth callback from Auth0"""    
     query_params = st.query_params
 
-    
     if "code" in query_params:
         code = query_params.get("code")
-        st.write(f"Auth code received: {code[:5]}...")
-        
+                
         auth = Auth0Management()
         user_info = auth.handle_callback(code)
         
         if user_info:
             set_auth_cookie(user_info)
-            params = {}
+            st.success("Login successful!")
+            
             st.query_params.clear()
             st.rerun()
         else:
-            st.error("Failed to authenticate with Auth0. Please try again.")
+            st.error("Authentication failed. Please try again or try using a different browser.")
+            with st.expander("Troubleshooting Tips"):
+                st.markdown("""
+                **Common issues:**
+                - Cookies might be blocked in private browsing
+                - Third-party cookies might be disabled in your browser
+                - You may need to clear your browser cache
+                - Try using a different browser
+                
+                If problems persist, please contact support.
+                """)
 
 def render_auth_ui():
     """Render authentication UI"""
@@ -127,11 +139,11 @@ def render_auth_ui():
             
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Your Reports"):
+                if st.button("Your Reports", key=get_unique_key("your_reports")):
                     switch_to_history_mode()
                     st.rerun()
             with col2:
-                if st.button("Logout"):
+                if st.button("Logout", key=get_unique_key("logout")):
                     clear_auth()
                     st.rerun()
     else:
@@ -168,9 +180,9 @@ def save_current_report(db, user_id, report_data, file_name=None):
     if not file_name:
         file_name = "Unnamed Report"
         
-    report_date = st.date_input("Report Date", datetime.now())
+    report_date = st.date_input("Report Date", datetime.now(), key=get_unique_key("report_date"))
     
-    if st.button("Save Report"):
+    if st.button("Save Report", key=get_unique_key("save_report")):
         with st.spinner("Saving report..."):
             report_id = db.save_report(user_id, report_data, file_name, report_date)
             
@@ -190,7 +202,7 @@ def render_history_page(db):
     
     st.title("Your Blood Report History")
     
-    if st.button("← Back to Home"):
+    if st.button("← Back to Home", key=get_unique_key("back_to_home")):
         switch_to_display_mode()
         st.rerun()
     
@@ -202,6 +214,92 @@ def render_history_page(db):
     
     st.write(f"You have {len(reports)} saved reports.")
     
+    if 'selected_report_id' in st.session_state:
+        selected_report = db.get_report_by_id(st.session_state.selected_report_id)
+        
+        if selected_report and "data_df" in selected_report:
+            st.success(f"Viewing Report: {selected_report.get('file_name', 'Unnamed Report')}")
+            report_date = selected_report.get('report_date')
+            if report_date:
+                st.write(f"Report Date: {report_date.strftime('%Y-%m-%d')}")
+            if st.button("← Back to Report List", key=get_unique_key("back_to_report_list")):
+                del st.session_state.selected_report_id
+                st.rerun()
+            st.subheader("Blood Test Results")
+            def highlight_status(row):
+                colors = pd.Series([''] * len(row), index=row.index)
+                if 'Status' in row and row['Status'] == 'High':
+                    colors = pd.Series(['background-color: rgba(220, 53, 69, 0.8); color: white'] * len(row), index=row.index)
+                elif 'Status' in row and row['Status'] == 'Low':
+                    colors = pd.Series(['background-color: rgba(255, 193, 7, 0.8); color: black'] * len(row), index=row.index)
+                return colors
+            
+            test_data = selected_report["data_df"]
+            st.dataframe(test_data.style.apply(highlight_status, axis=1))
+            st.subheader("EHR Style Visualization")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### Normal Results")
+                normal = test_data[test_data["Status"] == "Normal"]
+                if len(normal) > 0:
+                    for _, row in normal.iterrows():
+                        st.markdown(f"✅ **{row['Test']}**: {row['Value']} {row['Units']}")
+                else:
+                    st.write("No normal results found.")
+            
+            with col2:
+                st.markdown("#### Abnormal Results")
+                abnormal = test_data[test_data["Status"] != "Normal"]
+                if len(abnormal) > 0:
+                    for _, row in abnormal.iterrows():
+                        if row['Status'] == "High":
+                            st.markdown(f"""
+                            <div style="padding: 10px; border-radius: 5px; margin-bottom: 10px; 
+                            background-color: rgba(220, 53, 69, 0.2); border-left: 4px solid #dc3545;">
+                            <span style="color: #dc3545; font-weight: bold;">↑ {row['Test']}</span>: {row['Value']} {row['Units']} 
+                            <br/><small>Reference range: {row['Reference Range']}</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style="padding: 10px; border-radius: 5px; margin-bottom: 10px; 
+                            background-color: rgba(255, 193, 7, 0.2); border-left: 4px solid #ffc107;">
+                            <span style="color: #ffc107; font-weight: bold;">↓ {row['Test']}</span>: {row['Value']} {row['Units']} 
+                            <br/><small>Reference range: {row['Reference Range']}</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+                else:
+                    st.write("No abnormal results found.")
+            st.markdown("---")
+            st.subheader("Ask Questions About This Report")
+            
+            from blood_parser import BloodReportParser
+            parser = BloodReportParser()
+            parser.test_data = test_data
+            
+            question = st.text_input("Enter your question:", key=get_unique_key("history_question_input"))
+            use_gemini = st.checkbox("Use Gemini for Q&A (requires API key)", value=False, key=get_unique_key("use_gemini"))
+            
+            if use_gemini:
+                api_key = st.text_input("Enter Gemini API Key:", type="password", key=get_unique_key("history_api_key"))
+                if api_key:
+                    parser.api_key = api_key
+                    parser.gemini_model = parser.configure_gemini(api_key)
+            
+            if question:
+                with st.spinner("Analyzing your question..."):
+                    source, answer = parser.answer_question(question, use_gemini=use_gemini and api_key)
+                
+                st.markdown(f"**{source}**")
+                st.markdown(f"{answer}")
+                
+                if source == "Basic Response:" and not (use_gemini and api_key):
+                    st.info("For more detailed answers, enable Gemini and provide an API key.")
+            
+            return
+    
     for i, report in enumerate(reports):
         with st.expander(f"{report['file_name']} - {report['report_date'].strftime('%Y-%m-%d') if 'report_date' in report else 'Unknown date'}"):
             col1, col2, col3 = st.columns([2, 1, 1])
@@ -210,19 +308,12 @@ def render_history_page(db):
                 st.write(f"Created: {report['created_at'].strftime('%Y-%m-%d %H:%M')}")
             
             with col2:
-                if st.button("View", key=f"view_{i}"):
-                    full_report = db.get_report_by_id(report["_id"])
-                    
-                    if full_report and "data_df" in full_report:
-                        st.session_state.test_data = full_report["data_df"]
-                        st.session_state.report_id = report["_id"]
-                        st.session_state.app_mode = "display"
-                        st.rerun()
-                    else:
-                        st.error("Failed to load report data.")
+                if st.button("View", key=get_unique_key(f"view_{i}")):
+                    st.session_state.selected_report_id = report["_id"]
+                    st.rerun()
             
             with col3:
-                if st.button("Delete", key=f"delete_{i}"):
+                if st.button("Delete", key=get_unique_key(f"delete_{i}")):
                     if db.delete_report(report["_id"], user_id):
                         st.success("Report deleted successfully!")
                         st.rerun()
@@ -262,11 +353,12 @@ def create_streamlit_app():
     api_key_source = st.sidebar.radio(
         "API Key Source", 
         options=["Use from .env file", "Enter manually"],
-        index=0 if default_api_key else 1
+        index=0 if default_api_key else 1,
+        key=get_unique_key("api_key_source")
     )
     
     if api_key_source == "Enter manually":
-        api_key = st.sidebar.text_input("Enter Google Gemini API Key", type="password")
+        api_key = st.sidebar.text_input("Enter Google Gemini API Key", type="password", key=get_unique_key("manual_api_key"))
     else:
         api_key = default_api_key
         if not api_key:
@@ -284,10 +376,11 @@ def create_streamlit_app():
     selected_model = st.sidebar.selectbox(
         "Select Gemini Model",
         options=gemini_models,
-        index=1
+        index=1,
+        key=get_unique_key("gemini_model")
     )
     
-    use_gemini = st.sidebar.checkbox("Use Gemini for Q&A", value=True if api_key else False)
+    use_gemini = st.sidebar.checkbox("Use Gemini for Q&A", value=True if api_key else False, key=get_unique_key("use_gemini_sidebar"))
     
     parser = BloodReportParser(gemini_api_key=api_key if api_key else None, gemini_model_name=selected_model)
     
@@ -295,11 +388,11 @@ def create_streamlit_app():
         parser.test_data = st.session_state.test_data
         st.success(f"Viewing saved report (ID: {st.session_state.report_id})")
         
-        if st.button("Return to History"):
+        if st.button("Return to History", key=get_unique_key("return_to_history")):
             switch_to_history_mode()
             st.rerun()
     else:
-        uploaded_file = st.file_uploader("Upload blood report (PDF or Image)", type=["pdf", "png", "jpg", "jpeg"])
+        uploaded_file = st.file_uploader("Upload blood report (PDF or Image)", type=["pdf", "png", "jpg", "jpeg"], key=get_unique_key("file_uploader"))
         
         if uploaded_file is not None:
             file_bytes = uploaded_file.getvalue()
@@ -619,7 +712,7 @@ def create_streamlit_app():
                     
                     st.markdown("---")
                     st.subheader("Ask Questions About Your Results")
-                    st.button("Switch to Q&A Mode", on_click=switch_to_qa_mode)
+                    st.button("Switch to Q&A Mode", on_click=switch_to_qa_mode, key=get_unique_key("switch_to_qa_mode"))
                     
             elif st.session_state.app_mode == "qa":
                 parser.test_data = st.session_state.test_data
@@ -627,11 +720,11 @@ def create_streamlit_app():
                 st.subheader("Ask Questions About Your Results")
                 st.info(f"Using extracted data from {len(parser.test_data)} tests - No OCR needed")
                 
-                if st.button("← Back to Results"):
+                if st.button("← Back to Results", key=get_unique_key("back_to_results")):
                     switch_to_display_mode()
                     st.rerun()
                 
-                question = st.text_input("Enter your question:", key="question_input")
+                question = st.text_input("Enter your question:", key=get_unique_key("question_input"))
                 
                 if question:
                     with st.spinner("Analyzing your question..."):
