@@ -99,6 +99,7 @@ def extract_with_gemini(model, file_bytes, file_type):
                     except:
                         pass
                 
+                # Validate plausibility
                 valid = True
                 ranges = {
                     "hemoglobin": (1, 25),
