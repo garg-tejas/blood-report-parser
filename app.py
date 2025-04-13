@@ -93,25 +93,27 @@ def switch_to_history_mode():
 
 def handle_auth_callback():
     """Handle OAuth callback from Auth0"""
-    query_params = st.query_params
-    code = query_params.get("code", [""])[0]
+    query_params = st.experimental_get_query_params()
     
-    if code:
+    if "code" in query_params and query_params["code"]:
+        code = query_params["code"][0]
+        st.session_state.auth_code = code
+        
         auth = Auth0Management()
         user_info = auth.handle_callback(code)
         
         if user_info:
             set_auth_cookie(user_info)
             
-            cleaned_url = dict(st.query_params)
-            for key in ['code', 'state']:
-                if key in cleaned_url:
-                    del cleaned_url[key]
-            
-            st.query_params.clear()
-            for key, value in cleaned_url.items():
-                st.query_params[key] = value
+            params = {}
+            for k, v in query_params.items():
+                if k not in ['code', 'state']:
+                    params[k] = v
+                    
+            st.experimental_set_query_params(**params)
             st.rerun()
+        else:
+            st.error("Failed to authenticate with Auth0. Please try again.")
 
 def render_auth_ui():
     """Render authentication UI"""
@@ -211,11 +213,9 @@ def render_history_page(db):
             
             with col2:
                 if st.button("View", key=f"view_{i}"):
-                    # Get full report data
                     full_report = db.get_report_by_id(report["_id"])
                     
                     if full_report and "data_df" in full_report:
-                        # Store in session state to display
                         st.session_state.test_data = full_report["data_df"]
                         st.session_state.report_id = report["_id"]
                         st.session_state.app_mode = "display"
