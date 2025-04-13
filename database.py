@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
 from pymongo import MongoClient
 from pymongo.errors import ConfigurationError, OperationFailure
@@ -40,6 +40,12 @@ class BloodReportDatabase:
             self.connection_error = f"Failed to connect to MongoDB: {str(e)}"
             st.error(self.connection_error)
     
+    def _convert_dates_for_mongo(self, data):
+        """Convert datetime.date objects to datetime.datetime for MongoDB compatibility"""
+        if isinstance(data, date) and not isinstance(data, datetime):
+            return datetime(data.year, data.month, data.day)
+        return data
+    
     def save_report(self, user_id, report_data, file_name, report_date=None):
         """Save blood report data for a specific user"""
         if not self.client:
@@ -48,6 +54,8 @@ class BloodReportDatabase:
             
         if report_date is None:
             report_date = datetime.now()
+        else:
+            report_date = self._convert_dates_for_mongo(report_date)
             
         if isinstance(report_data, pd.DataFrame):
             report_data_dict = report_data.to_dict('records')
