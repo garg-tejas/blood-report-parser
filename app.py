@@ -7,6 +7,7 @@ import urllib.parse
 import hashlib
 from datetime import datetime
 import uuid
+import httpx
 from blood_parser import BloodReportParser
 from database import BloodReportDatabase
 from auth import Auth0Management, get_auth_status, set_auth_cookie, clear_auth, require_auth
@@ -95,6 +96,90 @@ def switch_to_display_mode():
 
 def switch_to_history_mode():
     st.session_state.app_mode = "history"
+
+def check_auth0_connection():
+    """Diagnostic function to check Auth0 connectivity"""
+    st.title("Auth0 Configuration Check")
+    
+    auth0_domain = st.text_input("Auth0 Domain:", 
+                                value=os.getenv("AUTH0_DOMAIN", ""),
+                                placeholder="e.g., dev-example.us.auth0.com",
+                                key=get_unique_key("domain_input"))
+    
+    callback_url = st.text_input("Callback URL:", 
+                                value=os.getenv("AUTH0_CALLBACK_URL", "http://localhost:8501/"),
+                                placeholder="e.g., http://localhost:8501/",
+                                key=get_unique_key("callback_input"))
+    
+    if st.button("Test Connection", key=get_unique_key("test_conn")):
+        if not auth0_domain:
+            st.error("Please enter your Auth0 domain")
+            return
+            
+        if auth0_domain.startswith(('http://', 'https://')):
+            st.warning("Auth0 domain should not include protocol (http:// or https://)")
+            auth0_domain = auth0_domain.split('//')[1]
+            
+        st.info(f"Testing connection to: https://{auth0_domain}/.well-known/openid-configuration")
+        
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(f"https://{auth0_domain}/.well-known/openid-configuration")
+                
+                if response.status_code == 200:
+                    st.success("✅ Connection successful! Auth0 domain is valid.")
+                    metadata = response.json()
+                    st.json(metadata)
+                else:
+                    st.error(f"❌ Connection failed with status code: {response.status_code}")
+                    st.error(f"Response: {response.text}")
+        except Exception as e:
+            st.error(f"❌ Connection error: {str(e)}")
+            st.markdown("""
+            ### Common reasons for connection failures:
+            
+            1. **Domain is incorrect**: Verify the domain in your Auth0 dashboard 
+            2. **Network issues**: Check if your network is blocking the connection
+            3. **Auth0 service status**: Check if Auth0 is experiencing issues
+            
+            Try opening the URL directly in your browser to see if it's accessible.
+            """)
+    
+    st.divider()
+    
+    st.markdown("""
+    ### How to correctly set up Auth0:
+    
+    1. **Auth0 Application Settings**:
+        - Application type should be "Regular Web Application"
+        - Ensure "Token Endpoint Authentication Method" is set to "POST"
+        - Enable CORS (Allow Cross-Origin Authentication)
+    
+    2. **Allowed URLs in Auth0 Dashboard**:
+        - Allowed Callback URLs: `{callback_url}`
+        - Allowed Web Origins: `{app_origin}`
+        - Allowed Logout URLs: `{callback_url}`
+        
+        The callback URL must **exactly** match what's in your environment variables, including trailing slashes.
+    
+    3. **Environment Variables**:
+        - AUTH0_DOMAIN={auth0_domain}
+        - AUTH0_CLIENT_ID=(from Auth0 dashboard)
+        - AUTH0_CLIENT_SECRET=(from Auth0 dashboard)
+        - AUTH0_CALLBACK_URL={callback_url}
+    """.format(
+        callback_url=callback_url,
+        app_origin="/".join(callback_url.split("/")[:3]),
+        auth0_domain=auth0_domain
+    ))
+    
+    st.markdown("""
+    ### Common Auth0 Errors:
+    
+    - **"Refused to connect"**: Usually means the domain is incorrect or there's a network issue
+    - **"invalid redirect_uri"**: Your callback URL doesn't match what's in Auth0 dashboard
+    - **"unauthorized_client"**: Client ID/Secret is incorrect or application type is wrong
+    """)
 
 def handle_auth_callback():
     """Handle OAuth callback from Auth0"""    
@@ -334,11 +419,18 @@ def create_streamlit_app():
     if 'report_id' not in st.session_state:
         st.session_state.report_id = None
 
+    if "auth0_check" in st.query_params and st.query_params.get("auth0_check") == "true":
+        check_auth0_connection()
+        return
+
     db = BloodReportDatabase()
     
     handle_auth_callback()
     
     render_auth_ui()
+    
+    with st.sidebar:
+        st.markdown("[Auth0 Configuration Check](/app?auth0_check=true)")
     
     if st.session_state.app_mode == "history":
         render_history_page(db)

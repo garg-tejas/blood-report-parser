@@ -11,7 +11,8 @@ import httpx
 from urllib.parse import quote_plus
 import time
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -25,6 +26,15 @@ class Auth0Management:
         self.auth0_client_secret = st.secrets.get("AUTH0_CLIENT_SECRET", os.getenv("AUTH0_CLIENT_SECRET"))
         self.auth0_domain = st.secrets.get("AUTH0_DOMAIN", os.getenv("AUTH0_DOMAIN"))
         self.auth0_callback_url = st.secrets.get("AUTH0_CALLBACK_URL", os.getenv("AUTH0_CALLBACK_URL", "http://localhost:8501/"))
+        
+        if self.auth0_domain and (self.auth0_domain.startswith('http://') or self.auth0_domain.startswith('https://')):
+            logger.warning(f"Auth0 domain contains protocol: {self.auth0_domain}")
+            self.auth0_domain = self.auth0_domain.split('//')[1]
+            
+        logger.info(f"AUTH0_DOMAIN: {self.auth0_domain}")
+        logger.info(f"AUTH0_CALLBACK_URL: {self.auth0_callback_url}")
+        logger.info(f"AUTH0_CLIENT_ID is set: {'Yes' if self.auth0_client_id else 'No'}")
+        logger.info(f"AUTH0_CLIENT_SECRET is set: {'Yes' if self.auth0_client_secret else 'No'}")
         
         self.config_valid = all([self.auth0_client_id, self.auth0_client_secret, self.auth0_domain])
         
@@ -42,6 +52,19 @@ class Auth0Management:
             return
             
         try:
+            logger.info("Attempting to register OAuth client")
+            with httpx.Client(timeout=5.0) as client:
+                test_url = f"https://{self.auth0_domain}/.well-known/openid-configuration"
+                logger.info(f"Testing connection to Auth0 domain: {test_url}")
+                try:
+                    response = client.get(test_url)
+                    if response.status_code == 200:
+                        logger.info("Connection to Auth0 domain successful")
+                    else:
+                        logger.error(f"Auth0 domain connection test failed: {response.status_code} {response.text}")
+                except Exception as e:
+                    logger.error(f"Failed to connect to Auth0 domain: {str(e)}")
+            
             self.oauth = OAuth()
             self.oauth.register(
                 "auth0",
@@ -77,7 +100,8 @@ class Auth0Management:
                     f"prompt={prompt}&"
                     f"scope=openid%20profile%20email")
         
-        logger.info(f"Login URL generated with state: {state}")
+        logger.info(f"Generated Auth0 login URL with state: {state}")
+        logger.info(f"Login URL: {login_url}")
         return login_url
 
     def get_logout_url(self):
@@ -95,7 +119,7 @@ class Auth0Management:
             return None
             
         try:
-            logger.info("Handling Auth0 callback...")
+            logger.info("Handling Auth0 callback with code")
             
             query_params = st.query_params
             if "state" in query_params:
@@ -119,45 +143,52 @@ class Auth0Management:
             }
             
             logger.info(f"Sending token request to {token_url}")
+            logger.info(f"Using callback URL: {self.auth0_callback_url}")
             
             with httpx.Client(timeout=30.0) as client:
                 headers = {"Content-Type": "application/json"}
-                response = client.post(token_url, json=token_data, headers=headers)
-                
-                if not response.is_success:
-                    logger.error(f"Token request failed: {response.status_code} - {response.text}")
-                    return None
-                
-                token_info = response.json()
-                logger.info(f"Token received successfully: {list(token_info.keys())}")
-                
-                if "access_token" in token_info:
-                    user_info_url = f"https://{self.auth0_domain}/userinfo"
-                    headers = {"Authorization": f"Bearer {token_info['access_token']}"}
+                try:
+                    response = client.post(token_url, json=token_data, headers=headers)
+                    logger.info(f"Token response status: {response.status_code}")
                     
-                    logger.info(f"Requesting user info from {user_info_url}")
-                    user_response = client.get(user_info_url, headers=headers)
-                    
-                    if not user_response.is_success:
-                        logger.error(f"User info request failed: {user_response.status_code} - {user_response.text}")
+                    if not response.is_success:
+                        logger.error(f"Token request failed: {response.status_code} - {response.text}")
                         return None
                     
-                    user_info = user_response.json()
-                    minimal_user_info = {
-                        "sub": user_info.get("sub"),
-                        "name": user_info.get("name"),
-                        "email": user_info.get("email"),
-                        "picture": user_info.get("picture")
-                    }
+                    token_info = response.json()
+                    logger.info(f"Token received successfully with keys: {list(token_info.keys())}")
                     
-                    minimal_user_info = {k: v for k, v in minimal_user_info.items() if v}
-                    
-                    logger.info(f"User info received for: {minimal_user_info.get('email', 'unknown')}")
-                    return minimal_user_info
-                else:
-                    logger.error("No access token found in Auth0 response")
-                    if "error" in token_info:
-                        logger.error(f"Auth0 error: {token_info.get('error')} - {token_info.get('error_description')}")
+                    if "access_token" in token_info:
+                        user_info_url = f"https://{self.auth0_domain}/userinfo"
+                        headers = {"Authorization": f"Bearer {token_info['access_token']}"}
+                        
+                        logger.info(f"Requesting user info from {user_info_url}")
+                        user_response = client.get(user_info_url, headers=headers)
+                        
+                        if not user_response.is_success:
+                            logger.error(f"User info request failed: {user_response.status_code} - {user_response.text}")
+                            return None
+                        
+                        user_info = user_response.json()
+                        
+                        minimal_user_info = {
+                            "sub": user_info.get("sub"),
+                            "name": user_info.get("name"),
+                            "email": user_info.get("email"),
+                            "picture": user_info.get("picture")
+                        }
+
+                        minimal_user_info = {k: v for k, v in minimal_user_info.items() if v}
+                        
+                        logger.info(f"User info received for: {minimal_user_info.get('email', 'unknown')}")
+                        return minimal_user_info
+                    else:
+                        logger.error("No access token found in Auth0 response")
+                        if "error" in token_info:
+                            logger.error(f"Auth0 error: {token_info.get('error')} - {token_info.get('error_description')}")
+                        return None
+                except Exception as e:
+                    logger.error(f"Error during token exchange: {str(e)}")
                     return None
                 
         except Exception as e:
@@ -251,6 +282,9 @@ def require_auth():
         if auth.config_valid:
             login_url = auth.get_login_url()
             
+            st.info(f"Auth0 Domain: {auth.auth0_domain}")
+            st.info(f"Callback URL: {auth.auth0_callback_url}")
+            
             st.markdown(f'''
             <div style="margin: 20px 0">
                 <a href="{login_url}" target="_self">
@@ -272,6 +306,27 @@ def require_auth():
             ''', unsafe_allow_html=True)
             
             st.info("Note: If you're using private browsing or have cookies disabled, you may need to allow cookies for this site.")
+            
+            with st.expander("Troubleshooting Auth0 Connection Issues"):
+                st.markdown("""
+                ### Common Auth0 Connection Issues:
+                
+                1. **Domain Connection Error**: If you see "refused to connect" errors:
+                   - Verify that your Auth0 domain is correct
+                   - Check that you're using HTTPS for connections
+                   - Try opening https://YOUR-DOMAIN.us.auth0.com in your browser
+                
+                2. **Callback URL Mismatch**:
+                   - Ensure callback URL in Auth0 dashboard exactly matches what's in your app
+                   - Check trailing slashes - they matter!
+                   
+                3. **Application Settings**:
+                   - Verify your application type is "Regular Web Application"
+                   - Enable "Allow Cross-Origin Authentication"
+                   
+                4. **Environment Variables**:
+                   - Double-check your environment variables or secrets are set correctly
+                """)
         else:
             st.error("Auth0 is not properly configured. Please check your settings.")
             
