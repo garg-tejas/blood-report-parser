@@ -93,24 +93,22 @@ def switch_to_history_mode():
 
 def handle_auth_callback():
     """Handle OAuth callback from Auth0"""
-    query_params = st.query_params
+    st.write("Checking for Auth0 callback...")
     
-    if "code" in query_params and query_params["code"]:
-        code = query_params["code"][0]
-        st.session_state.auth_code = code
+    query_params = st.query_params
+
+    
+    if "code" in query_params:
+        code = query_params.get("code")
+        st.write(f"Auth code received: {code[:5]}...")
         
         auth = Auth0Management()
         user_info = auth.handle_callback(code)
         
         if user_info:
             set_auth_cookie(user_info)
-            
             params = {}
-            for k, v in query_params.items():
-                if k not in ['code', 'state']:
-                    params[k] = v
-                    
-            st.experimental_set_query_params(**params)
+            st.query_params.clear()
             st.rerun()
         else:
             st.error("Failed to authenticate with Auth0. Please try again.")
