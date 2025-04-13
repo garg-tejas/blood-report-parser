@@ -93,7 +93,7 @@ def switch_to_history_mode():
 
 def handle_auth_callback():
     """Handle OAuth callback from Auth0"""
-    query_params = st.experimental_get_query_params()
+    query_params = st.query_params
     
     if "code" in query_params and query_params["code"]:
         code = query_params["code"][0]
