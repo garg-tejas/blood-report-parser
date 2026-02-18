@@ -8,7 +8,7 @@ The primary pipeline uses **GLM-OCR** for document parsing, followed by **Gemini
 
 ## Demo
 
-<video src="./docs/media/demo.mp4" controls width="100%"></video>
+![Demo](./docs/media/demo.webp)
 
 - Live demo: [blood-parser.vercel.app](https://blood-parser.vercel.app/)
 
