@@ -1,74 +1,83 @@
-## BloodParser – AI‑Powered Medical Report Dashboard
+# BloodParser - AI-Powered Medical Report Dashboard
 
-BloodParser is a full‑stack medical analytics dashboard that processes various types of lab reports through an AI‑powered OCR and analysis pipeline. Users can upload PDFs or images of blood test results, and the system automatically extracts, categorizes, and visualizes biomarkers in an interactive interface. The project supports multiple test panels including Complete Blood Count (CBC), Metabolic Panels, Lipid Profiles, Liver/Kidney Function, Thyroid Function, Coagulation Profiles, and more.
+BloodParser is a full-stack medical analytics dashboard that processes lab reports through an AI-powered OCR and analysis pipeline. Users can upload PDFs or images of blood test results, and the system automatically extracts, categorizes, and visualizes biomarkers in an interactive interface.
 
-The primary processing pipeline uses **GLM‑OCR** (a specialized document OCR model) for text extraction, followed by **Gemini** for structured data extraction. This approach provides better accuracy for complex medical reports with tables and mixed layouts. For broader accessibility, the system also supports a fallback mode using **Gemini Vision** directly, which works on Google's free tier. The OCR mode is passphrase‑protected to manage API usage costs while maintaining open access to the core functionality.
+The primary pipeline uses **GLM-OCR** for document parsing, followed by **Gemini** for structured extraction. For quick setup and free-tier usage, the app also supports a direct **Gemini Vision** fallback path.
+
+---
+
+## Demo
+
+<video src="./docs/media/demo.mp4" controls width="100%"></video>
+
+- Live demo: [blood-parser.vercel.app](https://blood-parser.vercel.app/)
+
+Sample report inputs available in this repo:
+
+| CBC                                            | CMP                                            | Thyroid                                                        |
+| ---------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------- |
+| ![CBC sample](./sample%20reports/cbc-test.png) | ![CMP sample](./sample%20reports/cmp-test.png) | ![Thyroid sample](./sample%20reports/thyroid-profile-test.png) |
 
 ---
 
 ## Features
 
 - **Comprehensive Report Support**
-
-  - Parses various medical test types: Complete Blood Count (CBC), Comprehensive Metabolic Panel (CMP), Lipid Profile, Liver Function Tests (LFT), Kidney Function Tests (KFT), Thyroid Profile, Coagulation Profile, Electrolytes, and more.
-  - Accepts **PDF** or **image formats** (JPG, PNG) up to 10MB.
-  - Dual processing pipelines:
-    - **OCR mode** (primary): GLM‑OCR for document parsing → Gemini for extraction (passphrase‑protected to manage API costs, includes retry logic for reliability).
-    - **Vision mode** (fallback): Direct Gemini Vision analysis (free tier, works out‑of‑the‑box).
-  - Automatically categorizes tests into logical groups (hematology, chemistry, lipids, etc.).
+  - Supports 15+ common blood-test panel/layout variations (CBC, CMP, Lipid, LFT, KFT, Thyroid, Coagulation, Electrolytes, and more)
+  - Accepts **PDF** and **image formats** (JPG, PNG) up to 10MB
+  - Dual processing paths:
+    - **OCR mode (primary):** GLM-OCR -> Gemini text extraction (secure-mode gated)
+    - **Vision mode (fallback):** Gemini multimodal extraction (free-tier friendly)
+  - Automatically groups tests into logical clinical categories
 
 - **Smart Health Insights**
-
-  - Left panel: **animated biomarker cards** grouped by category (CBC, Metabolic Panel, Lipids, Liver/Kidney/Thyroid, Vitamins & Minerals).
-  - Right panel: **contextual insights** that update as you hover or click a test, including:
-    - Plain‑language definitions
-    - Normal range vs. your value (with visual gauges)
-    - Possible implications of high/low values
-    - Related tests to investigate
+  - Left panel: animated biomarker cards grouped by category
+  - Right panel: contextual interpretations that update on hover/click
+  - Includes plain-language definitions, range comparisons, implications, and related markers
 
 - **Health Score Overview**
+  - Aggregates biomarkers into a single **Health Score** (0-100)
+  - Shows normal, borderline, and abnormal counts with a radial gauge
 
-  - Aggregates all biomarkers into a single **Health Score** (0–100) with a radial gauge and breakdown of normal / borderline / abnormal markers.
-
-- **Context‑Aware AI Assistant**
-
-  - Slide‑up chat interface with full‑screen mode for detailed discussions.
-  - Automatically receives full test context (all parsed results + currently selected biomarker).
-  - Answers questions about specific tests, correlations between markers, and general health implications.
-  - Provides patient‑friendly explanations while recommending professional medical consultation.
-  - Maintains conversation history within the session.
+- **Context-Aware AI Assistant**
+  - Slide-up chat UI with full-screen mode
+  - Receives full report context plus selected biomarker context
+  - Answers test-specific questions in patient-friendly language
 
 - **Modern UI / UX**
-  - Dark, deep‑blue "clinical" theme with frosted‑glass panels and animated gradients.
-  - Fully responsive layout: split‑pane view on large screens, stacked layout on mobile.
-  - Subtle motion and hover effects for enhanced interactivity.
+  - Responsive split-pane layout on desktop, stacked/mobile-optimized layout on phones
+  - Motion-rich interactions built with Framer Motion
+
+---
+
+## Technical Highlights
+
+- **Resilient dual pipeline:** `/api/analyze` dynamically switches between OCR-first and vision-first flows; OCR calls use retry logic with exponential backoff (`1s`, `2s`, `4s`) on transient failures.
+- **Weighted health score algorithm:** `components/results-panel.tsx` computes `healthScore = ((total - abnormal*1.5 - borderline*0.5) / total) * 100`, then clamps to `0-100`.
+- **Secure OCR access with abuse controls:** `/api/verify-ocr` uses timing-safe passphrase comparison, per-IP cooldown tracking, and a 60-second lockout after failed attempts.
 
 ---
 
 ## Tech Stack
 
 - **Frontend**
-
   - [Next.js 16](https://nextjs.org/) (App Router)
   - [React 19](https://react.dev/)
   - [Tailwind CSS 4](https://tailwindcss.com/)
-  - [Framer Motion](https://www.framer.com/motion/) for animations
-  - [Radix UI](https://www.radix-ui.com/) primitives (dialogs, tooltips, menus)
-  - [lucide-react](https://lucide.dev/) for icons
-  - [react-markdown](https://github.com/remarkjs/react-markdown) + `remark-gfm` for rich text in chat responses
+  - [Framer Motion](https://www.framer.com/motion/)
+  - [Radix UI](https://www.radix-ui.com/) primitives
+  - [lucide-react](https://lucide.dev/)
+  - [react-markdown](https://github.com/remarkjs/react-markdown) + `remark-gfm`
 
 - **Backend / AI**
-
-  - [Next.js API Routes] – `app/api/*`
-  - [@google/generative-ai](https://github.com/google-gemini/generative-ai-js) SDK calling Gemini models for:
-    - Structured extraction of lab values (from OCR text or direct vision input)
-    - Answering user questions about their results
-  - [GLM‑OCR (Z.ai)](https://huggingface.co/zai-org/GLM-OCR) via Z.ai `layout_parsing` API for optional passphrase‑gated OCR pipeline with automatic retry logic
+  - Next.js API routes (`app/api/*`)
+  - [@google/generative-ai](https://github.com/google-gemini/generative-ai-js) for extraction + chat
+  - [GLM-OCR (Z.ai)](https://huggingface.co/zai-org/GLM-OCR) via `layout_parsing` API
 
 - **Tooling & Deployment**
   - Node.js 22+
-  - pnpm for package management
-  - [Vercel](https://vercel.com/) for hosting & CI/CD
+  - pnpm
+  - [Vercel](https://vercel.com/)
 
 ---
 
@@ -89,23 +98,13 @@ pnpm install
 
 ### 3. Configure environment variables
 
-Create a `.env` file in the project root with the following:
+Copy the example file and add your keys:
 
 ```bash
-# Required - Google Gemini API key (works on free tier)
-GEMINI_API_KEY=your_google_generative_ai_api_key_here
-
-# Recommended - For OCR mode (primary pipeline)
-ZAI_API_KEY=your_zai_api_key_here
-OCR_PASSPHRASE="your-secret-phrase"
-
-# Optional - Model configuration (defaults shown)
-GEMINI_TEXT_MODEL=gemini-flash-latest
-GEMINI_VISION_MODEL=gemini-flash-latest
-GEMINI_CHAT_MODEL=gemini-flash-latest
+cp .env.example .env
 ```
 
-**Note**: The app works with just `GEMINI_API_KEY` for quick setup. For better accuracy with complex reports, add `ZAI_API_KEY` and `OCR_PASSPHRASE` to enable the OCR pipeline. The passphrase protects access to the paid OCR API while keeping the free vision mode openly available. Click "Activate secure mode" in the header and enter your passphrase to unlock OCR processing.
+Edit `.env` with your values. The app works with only `GEMINI_API_KEY`; add `ZAI_API_KEY` and `OCR_PASSPHRASE` to enable secure OCR mode.
 
 ### 4. Start the development server
 
@@ -113,7 +112,7 @@ GEMINI_CHAT_MODEL=gemini-flash-latest
 pnpm dev
 ```
 
-Then open `http://localhost:3000` in your browser.
+Open `http://localhost:3000`.
 
 ---
 
@@ -121,82 +120,43 @@ Then open `http://localhost:3000` in your browser.
 
 ```text
 .
-├─ app/
-│  ├─ layout.tsx          # Root layout, theming, metadata
-│  ├─ page.tsx            # Main dashboard with upload + results + chat
-│  ├─ api/
-│  │  ├─ analyze/route.ts # POST /api/analyze – dual OCR pipeline (Gemini Vision or GLM‑OCR)
-│  │  ├─ chat/route.ts    # POST /api/chat – context‑aware AI assistant
-│  │  └─ verify-ocr/      # POST /api/verify-ocr – passphrase verification with rate limiting
-│  └─ globals.css         # Tailwind + custom theme
-├─ components/
-│  ├─ upload-zone.tsx     # Drag‑and‑drop uploader with processing animation
-│  ├─ results-panel.tsx   # Left panel: health score + biomarker cards
-│  ├─ insights-panel.tsx  # Right panel: contextual explanations
-│  ├─ chat-drawer.tsx     # Slide‑up AI chat interface
-│  ├─ ocr-unlock-dialog.tsx  # Secure mode passphrase dialog
-│  └─ ui/*                # Shared UI primitives (buttons, inputs, dialogs, etc.)
-├─ lib/
-│  ├─ glm-ocr.ts          # GLM‑OCR API client with retry logic
-│  └─ utils.ts            # Utility functions
-├─ sample reports/        # Example blood test images for testing
-├─ public/                # Static assets (favicon, icons)
-└─ README.md              # You are here
+|- app/
+|  |- layout.tsx
+|  |- page.tsx
+|  |- api/
+|  |  |- analyze/route.ts
+|  |  |- chat/route.ts
+|  |  `- verify-ocr/route.ts
+|  `- globals.css
+|- components/
+|  |- upload-zone.tsx
+|  |- results-panel.tsx
+|  |- insights-panel.tsx
+|  |- chat-drawer.tsx
+|  |- ocr-unlock-dialog.tsx
+|  `- ui/*
+|- lib/
+|  |- glm-ocr.ts
+|  `- utils.ts
+|- sample reports/
+|- public/
+`- README.md
 ```
 
 ---
 
-## Supported Report Types
+## What I Learned
 
-The system has been tested with the following lab panels (sample reports included in `sample reports/`):
-
-- Complete Blood Count (CBC) with Absolute Count
-- CBC with ESR (Erythrocyte Sedimentation Rate)
-- Comprehensive Metabolic Panel (CMP)
-- Lipid Profile
-- Liver Function Tests (LFT)
-- Kidney Function Tests (KFT)
-- Thyroid Profile (T3, T4, TSH)
-- Thyroid Antibodies
-- Coagulation Profile
-- Electrolytes Panel
-- TORCH Profile
-- Dengue Fever Panel
-
-The AI extraction is flexible and can handle variations in report layouts and naming conventions.
-
----
-
-## Architecture Notes
-
-### Dual Processing Pipeline
-
-1. **OCR Mode** (primary, passphrase‑protected):
-
-   - Image → GLM‑OCR (specialized document parsing, handles complex layouts/HTML)
-   - OCR markdown → Gemini text model (structured extraction)
-   - Includes automatic retry logic (3 attempts with exponential backoff)
-   - Superior accuracy for complex medical reports with tables and mixed content
-   - Uses paid Z.ai API credits
-
-2. **Vision Mode** (fallback):
-   - Direct image → Gemini multimodal model
-   - Fast, single API call
-   - Works on Google's free tier
-   - Good baseline performance for standard reports
-
-### Rate Limiting
-
-- Passphrase verification endpoint (`/api/verify-ocr`) implements per‑IP rate limiting
-- 60‑second cooldown after failed attempts
-- Countdown timer displayed to users
+- OCR-first extraction is noticeably better on dense table-based reports, but fallback vision mode is essential for fast setup and cost control.
+- Lightweight scoring heuristics work best when paired with transparent UI explanations (normal vs borderline vs abnormal) so users can trust the output.
+- Paid model access needs first-class guardrails (timing-safe verification, cooldowns, and client lock states), not just hidden UI toggles.
 
 ---
 
 ## Future Improvements
 
-- Add user accounts with persistent history of uploaded reports
-- Support additional test panels (hormones, tumor markers, genetic tests)
-- Trend analysis across multiple uploads (track biomarker changes over time)
-- Export reports to PDF with annotations
-- Multi‑language support for international lab reports
+- Add user accounts with persistent report history
+- Track biomarker trends across multiple uploads
+- Expand support for more specialized panels (hormones, tumor markers, genetics)
+- Export annotated reports to PDF
+- Add multilingual support for international report formats
