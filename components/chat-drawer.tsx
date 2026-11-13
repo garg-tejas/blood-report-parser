@@ -278,7 +278,7 @@ export default function ChatDrawer({
                       </div>
                       <h4 className="text-lg font-serif font-medium text-foreground mb-2">How can I help you?</h4>
                       <p className="text-sm text-muted-foreground text-center max-w-sm mb-6">
-                        Ask me anything about your blood test results. I'll provide personalized insights and explanations.
+                        Ask me anything about your blood test results. I&apos;ll provide personalized insights and explanations.
                       </p>
 
                       {/* Suggested questions */}
